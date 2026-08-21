@@ -9,14 +9,14 @@ import type { Station } from "@/lib/geo";
 import "leaflet/dist/leaflet.css";
 
 export type MapParticipant = { id: string; name: string; color: string; startStation: Station | null; homeStation: Station | null };
-export type MapResult = { mode: "station" | "point"; point: Pick<Station, "lat" | "lng">; station?: Station; address?: string; totalKm: number; individualKm: number[]; candidateCount: number };
+export type MapResult = { mode: "station" | "point"; strategy: "centroid" | "route"; point: Pick<Station, "lat" | "lng">; station?: Station; address?: string; totalKm: number; individualKm: number[]; candidateCount: number };
 type RadarMapProps = { participants: MapParticipant[]; result: MapResult | null };
 
 function FitBounds({ participants, result }: RadarMapProps) {
   const map = useMap();
   useEffect(() => {
     const points = participants.flatMap(participant => [participant.startStation, participant.homeStation].filter((station): station is Station => Boolean(station)).map(station => [station.lat, station.lng] as [number, number]));
-    if (result) points.push([result.point.lat, result.point.lng]);
+    if (result) { points.push([result.point.lat, result.point.lng]); if (result.station) points.push([result.station.lat, result.station.lng]); }
     if (points.length > 1) map.fitBounds(L.latLngBounds(points), { padding: [52, 52], maxZoom: 12 });
     if (points.length === 1) map.setView(points[0], 12);
   }, [map, participants, result]);
@@ -49,6 +49,6 @@ export default function RadarMap({ participants, result }: RadarMapProps) {
       return <span key={`${participant.id}-helper`}><Polyline positions={[[result.point.lat, result.point.lng], [projection.lat, projection.lng]]} pathOptions={{ color: participant.color, weight: 2, opacity: 0.92, dashArray: "3 8", lineCap: "round" }}><Tooltip sticky direction="top" className="route-tooltip">{participant.name}の移動線まで {result.individualKm[index]?.toFixed(1)} km</Tooltip></Polyline><CircleMarker center={[projection.lat, projection.lng]} radius={4} pathOptions={{ color: participant.color, weight: 2, fillColor: "#07111f", fillOpacity: 1 }} /></span>;
     }) : null}
     {participants.map(participant => participant.startStation ? <span key={`${participant.id}-points`}><Marker position={[participant.startStation.lat, participant.startStation.lng]} icon={endpointIcon(participant.color, "office")}><Popup><strong>{participant.name}の出発駅</strong><br />{participant.startStation.name}（{participant.startStation.line}）</Popup></Marker>{participant.homeStation ? <Marker position={[participant.homeStation.lat, participant.homeStation.lng]} icon={endpointIcon(participant.color, "home")}><Popup><strong>{participant.name}の帰宅駅</strong><br />{participant.homeStation.name}（{participant.homeStation.line}）</Popup></Marker> : null}</span> : null)}
-    {result ? <><CircleMarker center={[result.point.lat, result.point.lng]} radius={34} pathOptions={{ color: "#c6f36b", weight: 1, fillColor: "#c6f36b", fillOpacity: 0.11 }} /><Marker position={[result.point.lat, result.point.lng]} icon={result.mode === "station" ? stationTargetIcon : pointTargetIcon} zIndexOffset={800}><Popup><strong>{result.mode === "station" ? `集合候補：${result.station?.name}駅` : "計算上の最適地点"}</strong><br />{result.mode === "station" ? result.station?.line : result.address ?? `緯度 ${result.point.lat.toFixed(5)} / 経度 ${result.point.lng.toFixed(5)}`}<br />距離合計：{result.totalKm.toFixed(1)} km</Popup></Marker></> : null}
+    {result ? <>{result.mode === "station" ? <CircleMarker center={[result.point.lat, result.point.lng]} radius={9} pathOptions={{ color: "#c6f36b", weight: 2, dashArray: "3 5", fillOpacity: 0 }} /> : null}<CircleMarker center={result.mode === "station" && result.station ? [result.station.lat, result.station.lng] : [result.point.lat, result.point.lng]} radius={34} pathOptions={{ color: "#c6f36b", weight: 1, fillColor: "#c6f36b", fillOpacity: 0.11 }} /><Marker position={result.mode === "station" && result.station ? [result.station.lat, result.station.lng] : [result.point.lat, result.point.lng]} icon={result.mode === "station" ? stationTargetIcon : pointTargetIcon} zIndexOffset={800}><Popup><strong>{result.mode === "station" ? `重心に近い駅：${result.station?.name}駅` : result.strategy === "centroid" ? "入力駅の重心" : "通勤線バランス地点"}</strong><br />{result.mode === "station" ? `${result.station?.line}（重心の近傍）` : result.address ?? `緯度 ${result.point.lat.toFixed(5)} / 経度 ${result.point.lng.toFixed(5)}`}<br />距離合計：{result.totalKm.toFixed(1)} km</Popup></Marker></> : null}
   </MapContainer>;
 }

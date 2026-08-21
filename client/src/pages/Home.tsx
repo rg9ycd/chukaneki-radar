@@ -6,11 +6,11 @@ import { useMemo, useRef, useState } from "react";
 import { Building2, ChevronRight, CircleAlert, Crosshair, Download, House, LoaderCircle, MapPinned, MapPin, Minus, Moon, Plus, Radar, Route, ScanSearch, Sun, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import RadarMap, { type MapParticipant, type MapResult } from "@/components/RadarMap";
-import { distanceToRouteKm, findOptimalPoint, getLineStations, getNearestStation, interpolatePoint, pickBestStation, searchStations, type RouteInput, type Station } from "@/lib/geo";
+import { findInputCentroid, findOptimalPoint, getNearestStation, haversineKm, scoreInputCentroid, searchStations, type RouteInput, type Station } from "@/lib/geo";
 
 const COLORS = ["#4fa3ff", "#ff6b7a", "#58d7ad", "#ffb14b", "#b790ff", "#28c9e8", "#f779ba", "#a9dc47", "#fb8c56", "#7d91ff"];
 const DEMO_PARTICIPANTS = [{ name: "あかり", start: "品川", home: "吉祥寺" }, { name: "しょう", start: "渋谷", home: "大宮" }, { name: "ゆい", start: "東京", home: "横浜" }];
-type MeetingMode = "station" | "point";
+type MeetingMode = "centroid" | "station" | "route";
 type ThemeMode = "dark" | "light";
 type Participant = MapParticipant & { startQuery: string; homeQuery: string; hasHome: boolean; startSuggestions: Station[]; homeSuggestions: Station[] };
 type CalculationResult = MapResult;
@@ -62,7 +62,7 @@ function ParticipantCard({ participant, index, canRemove, onRemove, onUpdate }: 
 export default function Home() {
   const [participants, setParticipants] = useState<Participant[]>(() => [makeParticipant(0), makeParticipant(1), makeParticipant(2)]);
   const [result, setResult] = useState<CalculationResult | null>(null);
-  const [meetingMode, setMeetingMode] = useState<MeetingMode>("point");
+  const [meetingMode, setMeetingMode] = useState<MeetingMode>("centroid");
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [isCalculating, setIsCalculating] = useState(false);
   const [isDemoLoading, setIsDemoLoading] = useState(false);
@@ -84,22 +84,23 @@ export default function Home() {
       const resolved = await resolveAllStations();
       if (resolved.some(participant => !participant.startStation || (participant.hasHome && !participant.homeStation))) { toast.error("全員の出発駅を選択してください。", { description: "帰宅駅を使う場合は、該当する駅も候補から選択してください。" }); return; }
       const routes: RouteInput[] = resolved.map(participant => ({ startStation: participant.startStation!, homeStation: participant.hasHome ? participant.homeStation : null }));
-      if (meetingMode === "point") {
+      if (meetingMode === "route") {
         const bestPoint = findOptimalPoint(routes);
         if (!bestPoint) throw new Error("最適地点を計算できませんでした。");
         const address = await reverseGeocodeAddress(bestPoint.point.lat, bestPoint.point.lng);
-        setResult({ mode: "point", point: bestPoint.point, totalKm: bestPoint.totalKm, individualKm: bestPoint.individualKm, candidateCount: 0, address });
-        toast.success("計算上の最適地点を捕捉しました。", { description: "駅に限定せず、地図上で最も近い一点を表示しています。" }); return;
+        setResult({ mode: "point", strategy: "route", point: bestPoint.point, totalKm: bestPoint.totalKm, individualKm: bestPoint.individualKm, candidateCount: 0, address });
+        toast.success("通勤線バランス地点を捕捉しました。", { description: "各参加者の会社―自宅の線に近い一点を表示しています。" }); return;
       }
-      const inputStations = routes.flatMap(route => [route.startStation, ...(route.homeStation ? [route.homeStation] : [])]);
-      const candidates = new Map<string, Station>(); inputStations.forEach(station => candidates.set(`${station.name}-${station.line}-${station.lat}-${station.lng}`, station));
-      const lines = Array.from(new Set(inputStations.map(station => station.line))).filter(line => line !== "路線情報なし").slice(0, 16);
-      (await Promise.all(lines.map(line => getLineStations(line).catch(() => [])))).flat().forEach(station => candidates.set(`${station.name}-${station.line}-${station.lat}-${station.lng}`, station));
-      const samplePoints = routes.flatMap(route => route.homeStation ? [0.25, 0.5, 0.75].map(progress => interpolatePoint(route.startStation, route.homeStation!, progress)) : [{ lat: route.startStation.lat, lng: route.startStation.lng }]);
-      (await Promise.all(samplePoints.map(point => getNearestStation(point.lat, point.lng).catch(() => [])))).flat().forEach(station => candidates.set(`${station.name}-${station.line}-${station.lat}-${station.lng}`, station));
-      const best = pickBestStation(routes, Array.from(candidates.values())); if (!best) throw new Error("候補駅を評価できませんでした。");
-      setResult({ mode: "station", point: { lat: best.station.lat, lng: best.station.lng }, station: best.station, totalKm: best.totalKm, individualKm: best.individualKm, candidateCount: candidates.size });
-      toast.success(`${best.station.name}駅をレーダーが捕捉しました。`, { description: `${candidates.size}駅から、全員の線または出発地点に最も近い駅を選びました。` });
+      const centroid = findInputCentroid(routes); if (!centroid) throw new Error("入力駅から重心を計算できませんでした。");
+      const centroidScore = scoreInputCentroid(centroid, routes); const address = await reverseGeocodeAddress(centroid.lat, centroid.lng);
+      if (meetingMode === "station") {
+        const nearbyStations = await getNearestStation(centroid.lat, centroid.lng); const nearestStation = nearbyStations.reduce<Station | null>((nearest, station) => !nearest || haversineKm(centroid, station) < haversineKm(centroid, nearest) ? station : nearest, null);
+        if (!nearestStation) throw new Error("重心の近くに駅を見つけられませんでした。");
+        setResult({ mode: "station", strategy: "centroid", point: centroid, station: nearestStation, totalKm: centroidScore.totalKm, individualKm: centroidScore.individualKm, candidateCount: nearbyStations.length, address });
+        toast.success(`${nearestStation.name}駅を重心近傍駅として捕捉しました。`, { description: "入力駅の重心から物理的に最も近い駅を選んでいます。" }); return;
+      }
+      setResult({ mode: "point", strategy: "centroid", point: centroid, totalKm: centroidScore.totalKm, individualKm: centroidScore.individualKm, candidateCount: 0, address });
+      toast.success("入力駅の重心を捕捉しました。", { description: "重複を除いた全入力駅の地理的な中央を表示しています。" });
     } catch (error) { toast.error("計算を完了できませんでした。", { description: error instanceof Error ? error.message : "通信状況を確認して、もう一度お試しください。" }); } finally { setIsCalculating(false); }
   };
   const loadDemo = async () => {
@@ -135,23 +136,23 @@ export default function Home() {
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(file => file ? resolve(file) : reject(new Error("PNGを作成できませんでした。")), "image/png")); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `chukaneki-radar-${label}.png`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); toast.success("PNG画像を保存しました。", { description: "ダウンロードフォルダから、お好みのアプリで共有できます。" });
     } catch { toast.error("PNG画像を作成できませんでした。", { description: "画面のスクリーンショットでの共有をお試しください。" }); }
   };
-  const resultTitle = result?.mode === "station" ? result.station?.name : "最適地点";
+  const resultTitle = result?.mode === "station" ? result.station?.name : result?.strategy === "centroid" ? "入力駅の重心" : "通勤線バランス地点";
   return <main className={`app-shell ${theme}`}>
     <aside className="control-rail">
       <header className="brand-block"><div className="brand-mark-frame" aria-label="中間駅レーダーのロゴ"><img className="brand-mark" src="/manus-storage/radar-logo_0dcf6967.png" alt="" onError={event => event.currentTarget.classList.add("asset-unavailable")} /><span className="brand-mark-fallback" aria-hidden="true"><i /><i /><i /><i /><b>◎</b></span></div><div><p className="eyebrow"><Radar size={13} /> COMMUTE RADAR</p><h1>中間駅<br /><em>レーダー</em></h1></div><button type="button" className="theme-toggle" onClick={() => setTheme(current => current === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "ライトモードへ切替" : "ダークモードへ切替"}>{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}<span>{theme === "dark" ? "LIGHT" : "DARK"}</span></button></header>
       <p className="brand-copy">みんなの移動線が重なる、<br />集まりやすい場所を探す。</p>
       <section className="rail-status"><span><Users size={14} /> {participants.length} MEMBERS</span><span><Route size={14} /> STRAIGHT-LINE</span></section>
       <section className="theme-mode" aria-label="表示テーマ"><p>表示テーマ</p><div><button type="button" className={theme === "dark" ? "is-active" : ""} onClick={() => setTheme("dark")}><Moon size={14} /> ダーク</button><button type="button" className={theme === "light" ? "is-active" : ""} onClick={() => setTheme("light")}><Sun size={14} /> ライト</button></div></section>
-      <section className="mode-switch" aria-label="集合候補の表示モード"><p className="mode-label">MEETUP MODE</p><div><button type="button" className={meetingMode === "station" ? "is-active" : ""} onClick={() => { setMeetingMode("station"); setResult(null); }}><MapPinned size={14} /><span>最寄り駅</span><small>駅から選ぶ</small></button><button type="button" className={meetingMode === "point" ? "is-active" : ""} onClick={() => { setMeetingMode("point"); setResult(null); }}><MapPin size={14} /><span>最適地点</span><small>地図上の一点</small></button></div></section>
+      <section className="mode-switch" aria-label="集合候補の表示モード"><p className="mode-label">MEETUP MODE</p><div><button type="button" className={meetingMode === "centroid" ? "is-active" : ""} onClick={() => { setMeetingMode("centroid"); setResult(null); }}><MapPin size={14} /><span>重心</span><small>入力駅の中央</small></button><button type="button" className={meetingMode === "station" ? "is-active" : ""} onClick={() => { setMeetingMode("station"); setResult(null); }}><MapPinned size={14} /><span>最寄り駅</span><small>重心に近い駅</small></button><button type="button" className={meetingMode === "route" ? "is-active" : ""} onClick={() => { setMeetingMode("route"); setResult(null); }}><Route size={14} /><span>通勤線バランス</span><small>線に寄せる</small></button></div></section>
       <div className="member-list">{participants.map((participant, index) => <ParticipantCard key={participant.id} participant={participant} index={index} canRemove={participants.length > 2} onRemove={() => { setParticipants(current => current.filter(item => item.id !== participant.id)); setResult(null); }} onUpdate={update => updateParticipant(participant.id, update)} />)}</div>
-      <div className="rail-actions"><button type="button" className="add-member-button" disabled={participants.length >= 10} onClick={() => setParticipants(current => [...current, makeParticipant(current.length)])}><Plus size={17} /> 参加者を追加 <span>{participants.length}/10</span></button><button type="button" className="scan-button" disabled={isCalculating} onClick={calculate}>{isCalculating ? <LoaderCircle className="spin" size={18} /> : <ScanSearch size={18} />}{isCalculating ? "レーダーを走査中…" : meetingMode === "station" ? "駅をレーダーで探す" : "最適地点を算出"}<ChevronRight size={17} /></button><button type="button" className="demo-button" disabled={isDemoLoading} onClick={loadDemo}>{isDemoLoading ? <LoaderCircle className="spin" size={15} /> : <MapPinned size={15} />} 体験データを入力</button></div>
+      <div className="rail-actions"><button type="button" className="add-member-button" disabled={participants.length >= 10} onClick={() => setParticipants(current => [...current, makeParticipant(current.length)])}><Plus size={17} /> 参加者を追加 <span>{participants.length}/10</span></button><button type="button" className="scan-button" disabled={isCalculating} onClick={calculate}>{isCalculating ? <LoaderCircle className="spin" size={18} /> : <ScanSearch size={18} />}{isCalculating ? "レーダーを走査中…" : meetingMode === "station" ? "重心に近い駅を探す" : meetingMode === "route" ? "通勤線バランスを算出" : "入力駅の重心を算出"}<ChevronRight size={17} /></button><button type="button" className="demo-button" disabled={isDemoLoading} onClick={loadDemo}>{isDemoLoading ? <LoaderCircle className="spin" size={15} /> : <MapPinned size={15} />} 体験データを入力</button></div>
       <footer className="rail-footer">駅データ：HeartRails Express<br />地図：OpenStreetMap contributors</footer>
     </aside>
     <section className="map-area"><section className="map-stage" ref={shareCanvasRef}>
-      <div className="map-chrome top-chrome"><span>LIVE MAP / JAPAN</span><span className="live-dot" /> <span>{meetingMode === "station" ? "STATION MODE" : "POINT MODE"}</span></div><RadarMap participants={namedParticipants} result={result} />
+      <div className="map-chrome top-chrome"><span>LIVE MAP / JAPAN</span><span className="live-dot" /> <span>{meetingMode === "station" ? "NEAREST STATION" : meetingMode === "route" ? "ROUTE BALANCE" : "CENTROID MODE"}</span></div><RadarMap participants={namedParticipants} result={result} />
       <div className="radar-overlay" aria-hidden="true"><span className="ghost-route ghost-route-one" /><span className="ghost-route ghost-route-two" /><span className="ghost-route ghost-route-three" /><span className="radar-sweep" /><span className="radar-target-ghost"><i /><i /><b /></span><span className="coordinate-ticks ticks-top" /><span className="coordinate-ticks ticks-bottom" /></div>
-      <div className="legend-card"><div><span className="legend-dot start-dot" /> 出発駅</div><div><span className="legend-dot home-dot" /> 帰宅駅</div><div><span className="legend-target">◎</span> {meetingMode === "station" ? "集合候補" : "最適地点"}</div></div>
-      {result ? <section className="result-card" aria-live="polite"><img className="result-glow" src="/manus-storage/radar-glow_89c3ad34.png" alt="" /><div className="result-kicker"><Crosshair size={14} /> {result.mode === "station" ? "PROPOSED STATION" : "CALCULATED POINT"}</div><div className="station-result-title"><span>{result.mode === "station" ? "集合候補" : "集合地点"}</span><h2>{resultTitle}<small>{result.mode === "station" ? "駅" : ""}</small></h2></div><p className="result-line">{result.mode === "station" ? `${result.station?.line} · ${result.station?.prefecture}` : result.address ? `周辺住所：${result.address}` : "周辺住所を取得できませんでした"}</p>{result.mode === "point" ? <p className="result-coordinate">緯度 {result.point.lat.toFixed(5)} ・ 経度 {result.point.lng.toFixed(5)}</p> : null}<div className="metric-row"><div><span>線・地点からの距離合計</span><strong>{result.totalKm.toFixed(1)}<small> km</small></strong></div><div><span>{result.mode === "station" ? "評価した候補駅" : "計算方式"}</span><strong>{result.mode === "station" ? result.candidateCount : "連続"}<small>{result.mode === "station" ? " 駅" : " 最適化"}</small></strong></div></div><div className="fairness-block"><p><span>各メンバーから</span><b>近さのバランス</b></p>{namedParticipants.map((participant, index) => <div className="fairness-row" key={participant.id}><span className="member-color" style={{ background: participant.color }} /><span>{participant.name}</span><strong>{result.individualKm[index].toFixed(1)} km</strong></div>)}</div><button type="button" className="share-button" onClick={downloadPng}><Download size={17} /> PNG画像を保存</button></section> : null}
+      <div className="legend-card"><div><span className="legend-dot start-dot" /> 出発駅</div><div><span className="legend-dot home-dot" /> 帰宅駅</div><div><span className="legend-target">◎</span> {meetingMode === "station" ? "重心近傍駅" : meetingMode === "route" ? "通勤線バランス" : "入力駅の重心"}</div></div>
+      {result ? <section className="result-card" aria-live="polite"><img className="result-glow" src="/manus-storage/radar-glow_89c3ad34.png" alt="" /><div className="result-kicker"><Crosshair size={14} /> {result.mode === "station" ? "CENTROID NEAREST STATION" : result.strategy === "centroid" ? "INPUT STATION CENTROID" : "ROUTE BALANCE POINT"}</div><div className="station-result-title"><span>{result.mode === "station" ? "重心に近い駅" : result.strategy === "centroid" ? "集合地点" : "比較用の集合地点"}</span><h2>{resultTitle}<small>{result.mode === "station" ? "駅" : ""}</small></h2></div><p className="result-line">{result.mode === "station" ? `${result.station?.line} · ${result.station?.prefecture}` : result.address ? `周辺住所：${result.address}` : "周辺住所を取得できませんでした"}</p>{result.mode === "point" ? <p className="result-coordinate">緯度 {result.point.lat.toFixed(5)} ・ 経度 {result.point.lng.toFixed(5)}</p> : <p className="result-coordinate">重心：緯度 {result.point.lat.toFixed(5)} ・ 経度 {result.point.lng.toFixed(5)}</p>}<div className="metric-row"><div><span>{result.strategy === "centroid" ? "入力駅からの距離合計" : "移動線からの距離合計"}</span><strong>{result.totalKm.toFixed(1)}<small> km</small></strong></div><div><span>計算方式</span><strong>{result.strategy === "centroid" ? "重心" : "線分"}<small>{result.strategy === "centroid" ? " 中央" : " 最適化"}</small></strong></div></div><div className="fairness-block"><p><span>各メンバーから</span><b>{result.strategy === "centroid" ? "平均距離" : "近さのバランス"}</b></p>{namedParticipants.map((participant, index) => <div className="fairness-row" key={participant.id}><span className="member-color" style={{ background: participant.color }} /><span>{participant.name}</span><strong>{result.individualKm[index].toFixed(1)} km</strong></div>)}</div><button type="button" className="share-button" onClick={downloadPng}><Download size={17} /> PNG画像を保存</button></section> : null}
       <div className="map-chrome bottom-chrome"><span>2–10 MEMBERS</span><span>・</span><span>FIXED 16:10 MAP</span><span>・</span><span>v1.1</span></div>
     </section></section><div className="mobile-safety"><CircleAlert size={15} /> 出発駅は必須、帰宅駅は任意です。駅候補をタップして確定してください。</div>
   </main>;

@@ -38,6 +38,23 @@ export function pointToSegmentKm(point: Pick<Station, "lat" | "lng">, a: Pick<St
 export function interpolatePoint(a: Station, b: Station, progress: number) { return { lat: a.lat + (b.lat - a.lat) * progress, lng: a.lng + (b.lng - a.lng) * progress }; }
 export function distanceToRouteKm(point: Pick<Station, "lat" | "lng">, route: RouteInput) { return route.homeStation ? pointToSegmentKm(point, route.startStation, route.homeStation) : haversineKm(point, route.startStation); }
 
+/** Calculates the geographic centroid of unique input station locations. */
+export function findInputCentroid(routes: RouteInput[]) {
+  const uniqueStations = Array.from(new Map(routes.flatMap(route => [route.startStation, ...(route.homeStation ? [route.homeStation] : [])]).map(station => [`${station.lat.toFixed(6)}-${station.lng.toFixed(6)}`, station])).values());
+  if (!uniqueStations.length) return null;
+  return { lat: uniqueStations.reduce((sum, station) => sum + station.lat, 0) / uniqueStations.length, lng: uniqueStations.reduce((sum, station) => sum + station.lng, 0) / uniqueStations.length };
+}
+
+/** Scores a point by straight-line distance from the unique input stations and returns per-member averages. */
+export function scoreInputCentroid(point: Pick<Station, "lat" | "lng">, routes: RouteInput[]) {
+  const uniqueStations = Array.from(new Map(routes.flatMap(route => [route.startStation, ...(route.homeStation ? [route.homeStation] : [])]).map(station => [`${station.lat.toFixed(6)}-${station.lng.toFixed(6)}`, station])).values());
+  const individualKm = routes.map(route => {
+    const stations = [route.startStation, ...(route.homeStation ? [route.homeStation] : [])];
+    return stations.reduce((sum, station) => sum + haversineKm(point, station), 0) / stations.length;
+  });
+  return { totalKm: uniqueStations.reduce((sum, station) => sum + haversineKm(point, station), 0), individualKm };
+}
+
 export function pickBestStation<T extends { startStation: Station; homeStation: Station | null }>(participants: T[], candidates: Station[]) {
   const scored = candidates.map(station => { const individualKm = participants.map(participant => distanceToRouteKm(station, participant)); return { station, totalKm: individualKm.reduce((total, km) => total + km, 0), individualKm }; });
   return scored.reduce<{ station: Station; totalKm: number; individualKm: number[] } | null>((best, candidate) => !best || candidate.totalKm < best.totalKm ? candidate : best, null);
