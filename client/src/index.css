@@ -125,3 +125,6 @@ h1 em { color: #c6f36b; font-style: normal; }
 
 /* Station suggestions must sit above following participant cards, including the optional home station field. */
 .participant-card:focus-within { z-index: 60; }.station-field:focus-within, .home-field-wrap:focus-within { z-index: 70; }.station-suggestions { z-index: 80; }
+
+/* Keep suggestions in normal layout flow so optional-home results cannot be clipped by card or grid stacking. */
+.station-suggestions { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; margin-top: 5px; max-height: 148px; z-index: auto; }.station-field { align-self: start; }
