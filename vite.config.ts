@@ -3,8 +3,10 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 
+const githubPagesBase = process.env.GITHUB_ACTIONS ? "/chukaneki-radar/" : "/";
+
 export default defineConfig({
-  base: "./",
+  base: githubPagesBase,
   root: path.resolve(import.meta.dirname, "client"),
   plugins: [react(), tailwindcss()],
   server: {
