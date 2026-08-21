@@ -31,5 +31,5 @@
 - [x] iPad相当のデスクトップ表示およびAndroidスマホ相当の表示を確認する。
 - [x] GitHub Pages向けの公開手順を作成する。
 - [x] GitHub Actionsのpnpm重複指定を修正し、Pagesデプロイを再実行する。
-- [ ] GitHubへworkflow修正をpushし、ActionsのDeploy static site to GitHub Pagesを再実行して成功を確認する。
-- [ ] Settings → PagesまたはActionsログで公開URLと成功ステータスを確認する。
+- [x] GitHubへworkflow修正をpushし、ActionsのDeploy static site to GitHub Pagesを再実行して成功を確認する。
+- [x] Settings → PagesまたはActionsログで公開URLと成功ステータスを確認する。
