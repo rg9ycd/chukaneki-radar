@@ -122,3 +122,6 @@ h1 em { color: #c6f36b; font-style: normal; }
 
 /* Explicitly identify the editable participant name field. */
 .member-name-field { display: block; margin: 7px 0 10px; }.member-name-field > span { display: block; margin-bottom: 3px; color: #88a4bd; font-family: "Space Grotesk",sans-serif; font-size: 8px; font-weight: 700; letter-spacing: .11em; }.member-name-field .member-name { margin: 0; }.app-shell.light .member-name-field > span { color: #658097; }
+
+/* Station suggestions must sit above following participant cards, including the optional home station field. */
+.participant-card:focus-within { z-index: 60; }.station-field:focus-within, .home-field-wrap:focus-within { z-index: 70; }.station-suggestions { z-index: 80; }
