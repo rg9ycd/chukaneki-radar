@@ -33,6 +33,37 @@ async function reverseGeocodeAddress(lat: number, lng: number) {
   } catch { return undefined; }
 }
 
+type StaticMapProjection = { zoom: number; mapLeft: number; mapTop: number; toCanvas: (point: Pick<Station, "lat" | "lng">) => { x: number; y: number } };
+
+function mercatorPoint(point: Pick<Station, "lat" | "lng">, zoom: number) {
+  const scale = 256 * 2 ** zoom; const latitude = Math.max(-85.05112878, Math.min(85.05112878, point.lat)); const sin = Math.sin((latitude * Math.PI) / 180);
+  return { x: ((point.lng + 180) / 360) * scale, y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * scale };
+}
+
+function buildStaticMapProjection(points: Pick<Station, "lat" | "lng">[], width: number, height: number): StaticMapProjection {
+  for (let zoom = 13; zoom >= 3; zoom -= 1) {
+    const projected = points.map(point => mercatorPoint(point, zoom)); const minX = Math.min(...projected.map(point => point.x)); const maxX = Math.max(...projected.map(point => point.x)); const minY = Math.min(...projected.map(point => point.y)); const maxY = Math.max(...projected.map(point => point.y));
+    if (maxX - minX <= width * 0.72 && maxY - minY <= height * 0.68 || zoom === 3) {
+      const mapLeft = (minX + maxX) / 2 - width / 2; const mapTop = (minY + maxY) / 2 - height / 2;
+      return { zoom, mapLeft, mapTop, toCanvas: point => { const projectedPoint = mercatorPoint(point, zoom); return { x: projectedPoint.x - mapLeft, y: projectedPoint.y - mapTop }; } };
+    }
+  }
+  throw new Error("地図の範囲を計算できませんでした。");
+}
+
+async function loadMapTile(url: string): Promise<CanvasImageSource> {
+  const response = await fetch(url, { mode: "cors" }); if (!response.ok) throw new Error("地図タイルを取得できませんでした。"); const blob = await response.blob();
+  if ("createImageBitmap" in window) return createImageBitmap(blob);
+  return new Promise<HTMLImageElement>((resolve, reject) => { const image = new Image(); const objectUrl = URL.createObjectURL(blob); image.onload = () => { URL.revokeObjectURL(objectUrl); resolve(image); }; image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("地図画像を読み込めませんでした。")); }; image.src = objectUrl; });
+}
+
+async function paintStaticOsmMap(ctx: CanvasRenderingContext2D, projection: StaticMapProjection, width: number, height: number, isLight: boolean, offsetX: number, offsetY: number) {
+  const tileSize = 256; const minTileX = Math.floor(projection.mapLeft / tileSize); const maxTileX = Math.floor((projection.mapLeft + width) / tileSize); const minTileY = Math.floor(projection.mapTop / tileSize); const maxTileY = Math.floor((projection.mapTop + height) / tileSize); const worldTiles = 2 ** projection.zoom;
+  const tiles = await Promise.all(Array.from({ length: maxTileY - minTileY + 1 }, (_, row) => Array.from({ length: maxTileX - minTileX + 1 }, (_, column) => ({ tileX: minTileX + column, tileY: minTileY + row }))).flat().filter(tile => tile.tileY >= 0 && tile.tileY < worldTiles).map(async tile => ({ ...tile, image: await loadMapTile(`https://tile.openstreetmap.org/${projection.zoom}/${(tile.tileX % worldTiles + worldTiles) % worldTiles}/${tile.tileY}.png`) })));
+  ctx.save(); ctx.beginPath(); ctx.rect(offsetX, offsetY, width, height); ctx.clip(); ctx.filter = isLight ? "brightness(1.04) saturate(.75) contrast(.94)" : "brightness(.42) saturate(.5) hue-rotate(155deg) contrast(1.3)";
+  tiles.forEach(tile => ctx.drawImage(tile.image, offsetX + tile.tileX * tileSize - projection.mapLeft, offsetY + tile.tileY * tileSize - projection.mapTop, tileSize, tileSize)); ctx.restore();
+}
+
 function makeParticipant(index: number): Participant { return { id: crypto.randomUUID(), name: `メンバー${index + 1}`, color: COLORS[index % COLORS.length], startQuery: "", homeQuery: "", hasHome: true, startStation: null, homeStation: null, startSuggestions: [], homeSuggestions: [] }; }
 
 function StationField({ icon, label, value, suggestions, selectedStation, onChange, onSelect, onClear }: { icon: React.ReactNode; label: string; value: string; suggestions: Station[]; selectedStation: Station | null; onChange: (value: string) => void; onSelect: (station: Station) => void; onClear: () => void }) {
@@ -123,15 +154,19 @@ export default function Home() {
       ctx.fillStyle = ink; ctx.font = '700 52px "Noto Sans JP", sans-serif'; ctx.fillText("中間駅レーダー", 70, 136);
       const label = result.mode === "station" ? `${result.station?.name ?? "集合"}駅` : "計算上の最適地点";
       ctx.textAlign = "right"; ctx.fillStyle = ink; ctx.font = '700 42px "Noto Sans JP", sans-serif'; ctx.fillText(label, 1730, 86); ctx.fillStyle = sub; ctx.font = '500 24px "Noto Sans JP", sans-serif'; ctx.fillText(result.mode === "station" ? "最寄り駅モード" : result.address ?? "最適地点モード", 1730, 126); ctx.textAlign = "left";
-      const points = namedParticipants.flatMap(participant => [participant.startStation, participant.homeStation].filter((station): station is Station => Boolean(station))); points.push({ id: "result", name: "result", line: "", prefecture: "", lat: result.point.lat, lng: result.point.lng });
-      const minLat = Math.min(...points.map(point => point.lat)); const maxLat = Math.max(...points.map(point => point.lat)); const minLng = Math.min(...points.map(point => point.lng)); const maxLng = Math.max(...points.map(point => point.lng)); const latSpan = Math.max(maxLat - minLat, 0.01); const lngSpan = Math.max(maxLng - minLng, 0.01);
-      const coordinate = (point: Pick<Station, "lat" | "lng">) => ({ x: 150 + ((point.lng - minLng) / lngSpan) * 1500, y: 750 - ((point.lat - minLat) / latSpan) * 490 });
+      const points = namedParticipants.flatMap(participant => [participant.startStation, participant.homeStation].filter((station): station is Station => Boolean(station))); points.push({ id: "result", name: "result", line: "", prefecture: "", lat: result.point.lat, lng: result.point.lng }); if (result.station) points.push(result.station);
+      const projection = buildStaticMapProjection(points, 1660, 630); let mapLoaded = true; try { await paintStaticOsmMap(ctx, projection, 1660, 630, isLight, 70, 190); } catch { mapLoaded = false; }
+      const coordinate = (point: Pick<Station, "lat" | "lng">) => { const position = projection.toCanvas(point); return { x: 70 + position.x, y: 190 + position.y }; };
+      ctx.strokeStyle = isLight ? "rgba(57,97,126,.14)" : "rgba(120,183,230,.13)"; ctx.lineWidth = 1;
+      for (let x = 70; x <= 1730; x += 60) { ctx.beginPath(); ctx.moveTo(x, 190); ctx.lineTo(x, 820); ctx.stroke(); }
+      for (let y = 190; y <= 820; y += 60) { ctx.beginPath(); ctx.moveTo(70, y); ctx.lineTo(1730, y); ctx.stroke(); }
       namedParticipants.forEach(participant => {
         if (!participant.startStation) return; const start = coordinate(participant.startStation); const home = participant.homeStation ? coordinate(participant.homeStation) : null; const target = coordinate(result.point);
         ctx.strokeStyle = participant.color; ctx.lineWidth = 10; ctx.lineCap = "round"; ctx.setLineDash([]); ctx.beginPath(); ctx.moveTo(start.x, start.y); if (home) ctx.lineTo(home.x, home.y); else { ctx.setLineDash([15, 20]); ctx.lineTo(target.x, target.y); } ctx.stroke();
         ctx.setLineDash([]); ctx.fillStyle = participant.color; ctx.beginPath(); ctx.arc(start.x, start.y, 12, 0, Math.PI * 2); ctx.fill(); if (home) { ctx.save(); ctx.translate(home.x, home.y); ctx.rotate(Math.PI / 4); ctx.fillRect(-10, -10, 20, 20); ctx.restore(); }
       });
       const target = coordinate(result.point); ctx.strokeStyle = "#c6f36b"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(target.x, target.y, 29, 0, Math.PI * 2); ctx.stroke(); ctx.fillStyle = "#c6f36b"; ctx.beginPath(); ctx.arc(target.x, target.y, 13, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = isLight ? "rgba(23,49,72,.78)" : "rgba(237,245,255,.8)"; ctx.font = '600 15px "Noto Sans JP", sans-serif'; ctx.textAlign = "right"; ctx.fillText(mapLoaded ? "© OpenStreetMap contributors" : "地図タイルを読み込めませんでした", 1710, 796); ctx.textAlign = "left";
       ctx.fillStyle = panel; ctx.fillRect(70, 860, 1660, 165); ctx.strokeStyle = isLight ? "#b8cad6" : "#294b68"; ctx.strokeRect(70, 860, 1660, 165); ctx.fillStyle = sub; ctx.font = '600 22px "Noto Sans JP", sans-serif'; ctx.fillText("全員の移動線・出発地点からの距離合計", 110, 910); ctx.fillStyle = ink; ctx.font = '700 52px "Space Grotesk", "Noto Sans JP", sans-serif'; ctx.fillText(`${result.totalKm.toFixed(1)} km`, 110, 980); ctx.fillStyle = sub; ctx.font = '500 21px "Noto Sans JP", sans-serif'; ctx.fillText("実線：移動線　／　破線：出発地点から集合点への補助線", 880, 920); ctx.fillText("色の補助線：集合点から各移動線への最短距離", 880, 960);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(file => file ? resolve(file) : reject(new Error("PNGを作成できませんでした。")), "image/png")); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `chukaneki-radar-${label}.png`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); toast.success("PNG画像を保存しました。", { description: "ダウンロードフォルダから、お好みのアプリで共有できます。" });
     } catch { toast.error("PNG画像を作成できませんでした。", { description: "画面のスクリーンショットでの共有をお試しください。" }); }
