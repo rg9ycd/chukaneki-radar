@@ -33,4 +33,4 @@
 - [x] GitHub Actionsのpnpm重複指定を修正し、Pagesデプロイを再実行する。
 - [x] GitHubへworkflow修正をpushし、ActionsのDeploy static site to GitHub Pagesを再実行して成功を確認する。
 - [x] Settings → PagesまたはActionsログで公開URLと成功ステータスを確認する。
-- [ ] GitHub Pagesのリポジトリ配下URLで直接アプリを開けるよう、公開用ベースパスとルーティングを修正する。
+- [x] GitHub Pagesのリポジトリ配下URLで直接アプリを開けるよう、公開用ベースパスとルーティングを修正する。
