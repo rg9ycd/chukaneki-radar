@@ -14,6 +14,24 @@ type MeetingMode = "station" | "point";
 type ThemeMode = "dark" | "light";
 type Participant = MapParticipant & { startQuery: string; homeQuery: string; hasHome: boolean; startSuggestions: Station[]; homeSuggestions: Station[] };
 type CalculationResult = MapResult;
+const municipalityNameCache = new Map<string, string>();
+
+async function reverseGeocodeAddress(lat: number, lng: number) {
+  try {
+    const response = await fetch(`https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`);
+    if (!response.ok) return undefined;
+    const data = await response.json() as { results?: { muniCd?: string; lv01Nm?: string } };
+    const result = data.results; if (!result?.lv01Nm) return undefined;
+    let municipality = result.muniCd ? municipalityNameCache.get(result.muniCd) : undefined;
+    if (result.muniCd && !municipality) {
+      const source = await fetch("https://maps.gsi.go.jp/js/muni.js").then(value => value.text());
+      const match = source.match(new RegExp(`GSI\\.MUNI_ARRAY\\["${result.muniCd}"\\]\\s*=\\s*'([^']+)'`));
+      const parts = match?.[1]?.split(","); municipality = parts?.[1] && parts?.[3] ? `${parts[1]}${parts[3]}` : undefined;
+      if (municipality) municipalityNameCache.set(result.muniCd, municipality);
+    }
+    return `${municipality ?? ""}${result.lv01Nm}` || undefined;
+  } catch { return undefined; }
+}
 
 function makeParticipant(index: number): Participant { return { id: crypto.randomUUID(), name: `メンバー${index + 1}`, color: COLORS[index % COLORS.length], startQuery: "", homeQuery: "", hasHome: true, startStation: null, homeStation: null, startSuggestions: [], homeSuggestions: [] }; }
 
@@ -44,7 +62,7 @@ function ParticipantCard({ participant, index, canRemove, onRemove, onUpdate }: 
 export default function Home() {
   const [participants, setParticipants] = useState<Participant[]>(() => [makeParticipant(0), makeParticipant(1), makeParticipant(2)]);
   const [result, setResult] = useState<CalculationResult | null>(null);
-  const [meetingMode, setMeetingMode] = useState<MeetingMode>("station");
+  const [meetingMode, setMeetingMode] = useState<MeetingMode>("point");
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [isCalculating, setIsCalculating] = useState(false);
   const [isDemoLoading, setIsDemoLoading] = useState(false);
@@ -69,7 +87,8 @@ export default function Home() {
       if (meetingMode === "point") {
         const bestPoint = findOptimalPoint(routes);
         if (!bestPoint) throw new Error("最適地点を計算できませんでした。");
-        setResult({ mode: "point", point: bestPoint.point, totalKm: bestPoint.totalKm, individualKm: bestPoint.individualKm, candidateCount: 0 });
+        const address = await reverseGeocodeAddress(bestPoint.point.lat, bestPoint.point.lng);
+        setResult({ mode: "point", point: bestPoint.point, totalKm: bestPoint.totalKm, individualKm: bestPoint.individualKm, candidateCount: 0, address });
         toast.success("計算上の最適地点を捕捉しました。", { description: "駅に限定せず、地図上で最も近い一点を表示しています。" }); return;
       }
       const inputStations = routes.flatMap(route => [route.startStation, ...(route.homeStation ? [route.homeStation] : [])]);
@@ -102,7 +121,7 @@ export default function Home() {
       ctx.fillStyle = "#c6f36b"; ctx.font = '700 28px "Space Grotesk", sans-serif'; ctx.fillText("COMMUTE RADAR / RESULT", 70, 74);
       ctx.fillStyle = ink; ctx.font = '700 52px "Noto Sans JP", sans-serif'; ctx.fillText("中間駅レーダー", 70, 136);
       const label = result.mode === "station" ? `${result.station?.name ?? "集合"}駅` : "計算上の最適地点";
-      ctx.textAlign = "right"; ctx.fillStyle = ink; ctx.font = '700 42px "Noto Sans JP", sans-serif'; ctx.fillText(label, 1730, 86); ctx.fillStyle = sub; ctx.font = '500 24px "Noto Sans JP", sans-serif'; ctx.fillText(result.mode === "station" ? "最寄り駅モード" : "最適地点モード", 1730, 126); ctx.textAlign = "left";
+      ctx.textAlign = "right"; ctx.fillStyle = ink; ctx.font = '700 42px "Noto Sans JP", sans-serif'; ctx.fillText(label, 1730, 86); ctx.fillStyle = sub; ctx.font = '500 24px "Noto Sans JP", sans-serif'; ctx.fillText(result.mode === "station" ? "最寄り駅モード" : result.address ?? "最適地点モード", 1730, 126); ctx.textAlign = "left";
       const points = namedParticipants.flatMap(participant => [participant.startStation, participant.homeStation].filter((station): station is Station => Boolean(station))); points.push({ id: "result", name: "result", line: "", prefecture: "", lat: result.point.lat, lng: result.point.lng });
       const minLat = Math.min(...points.map(point => point.lat)); const maxLat = Math.max(...points.map(point => point.lat)); const minLng = Math.min(...points.map(point => point.lng)); const maxLng = Math.max(...points.map(point => point.lng)); const latSpan = Math.max(maxLat - minLat, 0.01); const lngSpan = Math.max(maxLng - minLng, 0.01);
       const coordinate = (point: Pick<Station, "lat" | "lng">) => ({ x: 150 + ((point.lng - minLng) / lngSpan) * 1500, y: 750 - ((point.lat - minLat) / latSpan) * 490 });
@@ -132,7 +151,7 @@ export default function Home() {
       <div className="map-chrome top-chrome"><span>LIVE MAP / JAPAN</span><span className="live-dot" /> <span>{meetingMode === "station" ? "STATION MODE" : "POINT MODE"}</span></div><RadarMap participants={namedParticipants} result={result} />
       <div className="radar-overlay" aria-hidden="true"><span className="ghost-route ghost-route-one" /><span className="ghost-route ghost-route-two" /><span className="ghost-route ghost-route-three" /><span className="radar-sweep" /><span className="radar-target-ghost"><i /><i /><b /></span><span className="coordinate-ticks ticks-top" /><span className="coordinate-ticks ticks-bottom" /></div>
       <div className="legend-card"><div><span className="legend-dot start-dot" /> 出発駅</div><div><span className="legend-dot home-dot" /> 帰宅駅</div><div><span className="legend-target">◎</span> {meetingMode === "station" ? "集合候補" : "最適地点"}</div></div>
-      {result ? <section className="result-card" aria-live="polite"><img className="result-glow" src="/manus-storage/radar-glow_89c3ad34.png" alt="" /><div className="result-kicker"><Crosshair size={14} /> {result.mode === "station" ? "PROPOSED STATION" : "CALCULATED POINT"}</div><div className="station-result-title"><span>{result.mode === "station" ? "集合候補" : "集合地点"}</span><h2>{resultTitle}<small>{result.mode === "station" ? "駅" : ""}</small></h2></div><p className="result-line">{result.mode === "station" ? `${result.station?.line} · ${result.station?.prefecture}` : `緯度 ${result.point.lat.toFixed(5)} · 経度 ${result.point.lng.toFixed(5)}`}</p><div className="metric-row"><div><span>線・地点からの距離合計</span><strong>{result.totalKm.toFixed(1)}<small> km</small></strong></div><div><span>{result.mode === "station" ? "評価した候補駅" : "計算方式"}</span><strong>{result.mode === "station" ? result.candidateCount : "連続"}<small>{result.mode === "station" ? " 駅" : " 最適化"}</small></strong></div></div><div className="fairness-block"><p><span>各メンバーから</span><b>近さのバランス</b></p>{namedParticipants.map((participant, index) => <div className="fairness-row" key={participant.id}><span className="member-color" style={{ background: participant.color }} /><span>{participant.name}</span><strong>{result.individualKm[index].toFixed(1)} km</strong></div>)}</div><button type="button" className="share-button" onClick={downloadPng}><Download size={17} /> PNG画像を保存</button></section> : null}
+      {result ? <section className="result-card" aria-live="polite"><img className="result-glow" src="/manus-storage/radar-glow_89c3ad34.png" alt="" /><div className="result-kicker"><Crosshair size={14} /> {result.mode === "station" ? "PROPOSED STATION" : "CALCULATED POINT"}</div><div className="station-result-title"><span>{result.mode === "station" ? "集合候補" : "集合地点"}</span><h2>{resultTitle}<small>{result.mode === "station" ? "駅" : ""}</small></h2></div><p className="result-line">{result.mode === "station" ? `${result.station?.line} · ${result.station?.prefecture}` : result.address ? `周辺住所：${result.address}` : "周辺住所を取得できませんでした"}</p>{result.mode === "point" ? <p className="result-coordinate">緯度 {result.point.lat.toFixed(5)} ・ 経度 {result.point.lng.toFixed(5)}</p> : null}<div className="metric-row"><div><span>線・地点からの距離合計</span><strong>{result.totalKm.toFixed(1)}<small> km</small></strong></div><div><span>{result.mode === "station" ? "評価した候補駅" : "計算方式"}</span><strong>{result.mode === "station" ? result.candidateCount : "連続"}<small>{result.mode === "station" ? " 駅" : " 最適化"}</small></strong></div></div><div className="fairness-block"><p><span>各メンバーから</span><b>近さのバランス</b></p>{namedParticipants.map((participant, index) => <div className="fairness-row" key={participant.id}><span className="member-color" style={{ background: participant.color }} /><span>{participant.name}</span><strong>{result.individualKm[index].toFixed(1)} km</strong></div>)}</div><button type="button" className="share-button" onClick={downloadPng}><Download size={17} /> PNG画像を保存</button></section> : null}
       <div className="map-chrome bottom-chrome"><span>2–10 MEMBERS</span><span>・</span><span>FIXED 16:10 MAP</span><span>・</span><span>v1.1</span></div>
     </section></section><div className="mobile-safety"><CircleAlert size={15} /> 出発駅は必須、帰宅駅は任意です。駅候補をタップして確定してください。</div>
   </main>;
