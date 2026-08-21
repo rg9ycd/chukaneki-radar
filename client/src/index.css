@@ -150,3 +150,16 @@ h1 em { color: #c6f36b; font-style: normal; }
   .map-area { padding: 8px; }
   .map-stage { aspect-ratio: 16 / 10; }
 }
+
+/* Result information is a companion panel, never an overlay on the map canvas. */
+.map-area { flex-direction: column; justify-content: flex-start; gap: 18px; }
+.result-panel { position: relative; right: auto; bottom: auto; width: min(100%, 720px); margin: 0 auto; flex: 0 0 auto; }
+
+@media (max-width: 900px) {
+  .map-area { gap: 12px; }
+  .result-panel { width: 100%; max-height: none; overflow: visible; transform: none; }
+}
+
+@media (max-width: 480px) {
+  .result-panel { right: auto; bottom: auto; transform: none; }
+}
