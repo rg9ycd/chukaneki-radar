@@ -129,8 +129,6 @@ h1 em { color: #c6f36b; font-style: normal; }
 /* Keep suggestions in normal layout flow so optional-home results cannot be clipped by card or grid stacking. */
 .station-suggestions { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; margin-top: 5px; max-height: 148px; z-index: auto; }.station-field { align-self: start; }
 
-/* Clear, always-visible theme selector placed near the primary controls. */
-.theme-mode { position: relative; z-index: 1; margin: 0 0 12px; padding: 8px; border: 1px solid rgba(96,130,159,.32); background: rgba(9,27,45,.57); }.theme-mode p { margin: 0 0 6px; color: #8faac4; font-family: "Space Grotesk",sans-serif; font-size: 9px; font-weight: 700; letter-spacing: .13em; }.theme-mode > div { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }.theme-mode button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; color: #91abc2; border: 1px solid #29455f; background: rgba(7,22,37,.56); font-size: 11px; font-weight: 700; }.theme-mode button.is-active { color: #eaffc2; border-color: #c6f36b; background: rgba(198,243,107,.11); }.app-shell.light .theme-mode { border-color: #bed0dc; background: rgba(255,255,255,.7); }.app-shell.light .theme-mode p { color: #658097; }.app-shell.light .theme-mode button { color: #527088; border-color: #bed0dc; background: #f9fcfd; }.app-shell.light .theme-mode button.is-active { color: #284609; border-color: #87ae38; background: rgba(198,243,107,.32); }
 .result-coordinate { margin: -4px 0 12px; color: #8faac4; font-family: "Space Grotesk",sans-serif; font-size: 10px; letter-spacing: .035em; }.app-shell.light .result-coordinate { color: #5c788e; }
 .mode-switch > div { grid-template-columns: 1fr 1fr; }.mode-switch > div > button:last-child { grid-column: 1 / -1; }
 
@@ -163,3 +161,16 @@ h1 em { color: #c6f36b; font-style: normal; }
 @media (max-width: 480px) {
   .result-panel { right: auto; bottom: auto; transform: none; }
 }
+
+/* Overview-first composition: title, map, result, calculation controls, then member inputs. */
+.app-shell { display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 24px clamp(14px, 3vw, 44px) 32px; overflow: visible; }
+.app-header, .map-area, .result-panel, .operation-panel, .members-panel, .rail-footer { width: min(100%, 1180px); }
+.app-header { position: relative; padding: 0 0 16px; }.app-header .brand-block { padding-right: 76px; }.app-header .brand-copy { margin: 12px 0 0; color: #a9c0d4; font-size: 12px; }
+.map-area { display: block; min-height: 0; padding: 0; background: transparent; }.map-area .map-stage { width: 100%; min-height: 0; height: auto; aspect-ratio: 16 / 10; }
+.result-panel { margin: 18px 0 0; }.operation-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, .72fr); gap: 14px; margin-top: 18px; padding: 14px; border: 1px solid rgba(96,130,159,.32); background: rgba(10,27,45,.54); }.operation-panel .mode-switch { margin: 0; }.calculate-actions { display: grid; align-content: center; gap: 8px; }.calculate-actions .scan-button { width: 100%; }.calculate-actions .demo-button { min-height: 30px; }
+.members-panel { margin-top: 18px; }.members-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #b8cbde; font-family: "Space Grotesk",sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .1em; }.members-panel-header > span { display: flex; align-items: center; gap: 7px; }.members-panel-header small { color: #7894ae; font-size: 9px; }.members-panel .member-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }.members-panel .add-member-button { width: min(360px, 100%); margin: 12px auto 0; }.rail-footer { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid rgba(93,128,155,.22); text-align: center; }
+.app-shell.light .app-header .brand-copy { color: #4a6578; }.app-shell.light .operation-panel { border-color: #bed0dc; background: rgba(255,255,255,.72); }.app-shell.light .members-panel-header { color: #48667b; }.app-shell.light .rail-footer { border-color: #c9d7df; }
+
+@media (max-width: 900px) { .app-shell { display: flex; padding: 18px 14px 24px; }.app-header, .map-area, .result-panel, .operation-panel, .members-panel, .rail-footer { width: 100%; }.app-header .brand-copy { display: block; }.operation-panel { grid-template-columns: 1fr; }.members-panel .member-list { grid-template-columns: 1fr; }.members-panel .add-member-button { width: 100%; }.rail-footer { display: block; }.mobile-safety { width: 100%; margin-top: 12px; } }
+
+@media (max-width: 480px) { .app-shell { padding: 14px 10px 20px; }.app-header { padding-bottom: 12px; }.app-header .brand-copy { margin-top: 8px; font-size: 11px; }.operation-panel { margin-top: 12px; padding: 10px; }.members-panel { margin-top: 14px; }.result-panel { margin-top: 12px; } }
