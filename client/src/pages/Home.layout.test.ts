@@ -30,4 +30,10 @@ describe("Home画面の表示順", () => {
     expect(homeSource).toContain('className="scan-button"');
     expect(cssSource).toContain(".operation-panel { display: grid;");
   });
+
+  it("参加者追加時は古い計算結果を破棄し、人数差があっても距離表示で例外にしない", () => {
+    expect(homeSource).toContain("const addParticipant = () => { setResult(null);");
+    expect(homeSource).toContain("onClick={addParticipant}");
+    expect(homeSource).toContain("formatIndividualDistance(result.individualKm[index])");
+  });
 });
