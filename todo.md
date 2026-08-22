@@ -34,4 +34,4 @@
 - [x] GitHubへworkflow修正をpushし、ActionsのDeploy static site to GitHub Pagesを再実行して成功を確認する。
 - [x] Settings → PagesまたはActionsログで公開URLと成功ステータスを確認する。
 - [x] GitHub Pagesのリポジトリ配下URLで直接アプリを開けるよう、公開用ベースパスとルーティングを修正する。
-- [ ] スマホ実機でもGitHub Pagesの公開URLからトップ画面を直接表示できるようにする。
+- [x] スマホ実機で通常のGitHub Pages公開URLからトップ画面を直接表示できることを確認する。
